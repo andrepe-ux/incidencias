@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Análisis Incidencias</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+body { font-family: Arial, sans-serif; margin:20px; background:#f5f5f5; color:#333; }
+h1 { text-align:center; margin-bottom:20px; }
+.controls { background:#fff; padding:20px; border-radius:12px; box-shadow:0 2px 6px rgba(0,0,0,0.1); margin-bottom:20px; }
+.chart-box { background:#fff; padding:20px; border-radius:12px; box-shadow:0 2px 6px rgba(0,0,0,0.1); margin-bottom:20px; }
+canvas { width:100%; max-width:800px; height:400px; }
+select, button { margin-top:10px; padding:5px; }
+label { font-weight:bold; margin-right:5px; }
+table { border-collapse: collapse; width:100%; margin-top:10px; }
+th, td { border:1px solid #ccc; padding:5px; text-align:left; }
+th { background:#eee; }
+#loading { display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(255,255,255,0.9); padding:20px 30px; border-radius:10px; box-shadow:0 2px 8px rgba(0,0,0,0.2); font-size:18px; z-index:1000; }
+#dropArea { border:2px dashed #999; border-radius:12px; padding:20px; text-align:center; color:#666; margin-top:15px; cursor:pointer; }
+#dropArea.hover { border-color:#333; color:#333; }
+#legendIncidencia ul { padding-left:20px; margin:5px 0; }
+#legendIncidencia li { margin-bottom:5px; display:flex; align-items:center; }
+.legend-color { display:inline-block; width:16px; height:16px; margin-right:8px; border-radius:3px; }
+.exportChartBtn, .exportTableBtn { margin: 5px 0 10px 0; padding: 5px 10px; font-size: 14px; cursor: pointer; border-radius: 5px; border: 1px solid #888; background-color: #f0f0f0; }
+.exportChartBtn:hover, .exportTableBtn:hover { background-color: #e0e0e0; }
+
+/* Layout responsivo: 2 colunas em telas grandes, 1 coluna em mobile */
+.charts { display: flex; flex-wrap: wrap; gap:20px; }
+.chart-box { flex: 1 1 45%; }
+@media(max-width:900px){ .chart-box { flex:1 1 100%; } }
+#legendIncidencia { margin-top:30px; padding-top:15px; border-top:2px solid #ccc; }
+footer { position: fixed; bottom: 0; left: 0; width: 100%; background: #888; color: #fff; text-align: center; padding: 10px 0; font-size: 14px; z-index: 100; }
+</style>
+</head>
+<body>
+
+<h1>📊 Análisis Incidencias</h1>
+
+<div class="controls">
+  <label>1️⃣ Cargar archivo Excel:</label>
+  <div id="dropArea">Arrastra y suelta el archivo aquí o haz clic para seleccionar</div>
+  <input type="file" id="excelFile" accept=".xlsx,.xls,.csv" style="display:none;">
+  
+  <div id="zonaContainer" style="margin-top:15px; display:none;">
+    <label>Filtrar por ZONA RRHH:</label>
+    <select id="zonaSelect"><option value="all">Todas</option></select>
+  </div>
+
+  <div style="margin-top:15px;">
+    <button id="exportPDF">Exportar a PDF</button>
+    <button id="exportCSV">Exportar a CSV</button>
+    <button id="exportXLSX">Exportar a XLSX</button>
+  </div>
+</div>
+
+<div class="charts">
+
+  <div class="chart-box">
+    <h3>GERENTE RRHH</h3>
+    <label>Tipo de gráfico:</label>
+    <select id="tipoGerente">
+      <option value="bar">Barras</option>
+      <option value="line">Líneas</option>
+      <option value="pie">Queso</option>
+    </select>
+    <button class="exportChartBtn" data-chart="chartGerente">Exportar gráfico imagen</button>
+    <button class="exportTableBtn" data-table="tableGerente">Exportar tabla imagen</button>
+    <canvas id="chartGerente"></canvas>
+    <div id="tableGerente"></div>
+  </div>
+
+  <div class="chart-box">
+    <h3>TIPO INCIDENCIA</h3>
+    <label>Tipo de gráfico:</label>
+    <select id="tipoIncidencia">
+      <option value="bar">Barras</option>
+      <option value="line">Líneas</option>
+      <option value="pie">Queso</option>
+    </select>
+    <button class="exportChartBtn" data-chart="chartIncidencia">Exportar gráfico imagen</button>
+    <button class="exportTableBtn" data-table="tableIncidencia">Exportar tabla imagen</button>
+    <canvas id="chartIncidencia"></canvas>
+    <div id="tableIncidencia" style="margin-bottom:30px;"></div>
+    <div id="legendIncidencia"></div>
+  </div>
+
+</div>
+
+<div id="loading">⏳ Procesando archivo...</div>
+
+<footer>
+  Área Contratación y Movimientos SH © 2025
+</footer>
+
+<script>
+let workbook, sheetJson;
+let chartGerente, chartIncidencia;
+let colGerente, colTipoInc, colZona;
+
+const excelFile = document.getElementById('excelFile');
+const dropArea = document.getElementById('dropArea');
+const zonaSelect = document.getElementById('zonaSelect');
+const tipoGerente = document.getElementById('tipoGerente');
+const tipoIncidencia = document.getElementById('tipoIncidencia');
+const loadingDiv = document.getElementById('loading');
+const exportPDFBtn = document.getElementById('exportPDF');
+const exportCSVBtn = document.getElementById('exportCSV');
+const exportXLSXBtn = document.getElementById('exportXLSX');
+
+dropArea.addEventListener('click', ()=>excelFile.click());
+dropArea.addEventListener('dragover', e => { e.preventDefault(); dropArea.classList.add('hover'); });
+dropArea.addEventListener('dragleave', e => { e.preventDefault(); dropArea.classList.remove('hover'); });
+dropArea.addEventListener('drop', e => { 
+  e.preventDefault(); 
+  dropArea.classList.remove('hover'); 
+  const file = e.dataTransfer.files[0]; 
+  if(file) handleFile({ target:{ files:[file] } });
+});
+excelFile.addEventListener('change', handleFile);
+zonaSelect.addEventListener('change', updateDashboard);
+tipoGerente.addEventListener('change', updateDashboard);
+tipoIncidencia.addEventListener('change', updateDashboard);
+exportPDFBtn.addEventListener('click', exportDashboardPDF);
+exportCSVBtn.addEventListener('click', exportFilteredCSV);
+exportXLSXBtn.addEventListener('click', exportFilteredXLSX);
+document.querySelectorAll('.exportChartBtn').forEach(btn=>{ btn.addEventListener('click', ()=>exportChartPNG(btn.dataset.chart)); });
+document.querySelectorAll('.exportTableBtn').forEach(btn=>{ btn.addEventListener('click', ()=>exportTablePNG(btn.dataset.table)); });
+
+// =================== Excel ===================
+function handleFile(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  loadingDiv.style.display='block';
+  const reader = new FileReader();
+  reader.onload = (evt)=>{
+    const data = new Uint8Array(evt.target.result);
+    workbook = XLSX.read(data, {type:'array'});
+    const firstSheet = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[firstSheet];
+    sheetJson = XLSX.utils.sheet_to_json(sheet, {defval:''});
+    detectColumns();
+    populateZona(true);
+    updateDashboard();
+    loadingDiv.style.display='none';
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function detectColumns(){
+  if(!sheetJson.length) return;
+  const headers = Object.keys(sheetJson[0]).map(h=>h.toUpperCase());
+  colGerente = headers.find(h=>h.includes('GERENTE')) || headers[0];
+  colTipoInc = headers.find(h=>h.includes('INCIDENCIA')) || headers[0];
+  colZona = headers.find(h=>h.includes('ZONA')) || headers[0];
+}
+
+function populateZona(selectZona1=false){
+  const zonas = Array.from(new Set(sheetJson.map(r=>r[colZona]||'No Definida'))).sort();
+  zonaSelect.innerHTML = '<option value="all">Todas</option>';
+  zonas.forEach(z=>{ const opt = document.createElement('option'); opt.value = z; opt.textContent = z; zonaSelect.appendChild(opt); });
+  if(selectZona1 && zonas.includes('ZONA 1')) zonaSelect.value = 'ZONA 1';
+  document.getElementById('zonaContainer').style.display='block';
+}
+
+function getFilteredData(){ 
+  const zona = zonaSelect.value; 
+  return zona==='all' ? sheetJson : sheetJson.filter(r=>r[colZona]===zona); 
+}
+
+function countValues(data, col){
+  const grouped = {};
+  data.forEach(r=>{ grouped[r[col]||'(vacío)'] = (grouped[r[col]||'(vacío)']||0)+1; });
+  return grouped;
+}
+
+function updateDashboard(){
+  if(!sheetJson) return;
+  chartGerente = renderChart(chartGerente,'chartGerente',countValues(getFilteredData(),colGerente),tipoGerente.value,'Gerentes','tableGerente');
+  chartIncidencia = renderChart(chartIncidencia,'chartIncidencia',countValues(getFilteredData(),colTipoInc),tipoIncidencia.value,'Tipo Incidencia','tableIncidencia');
+  renderLeyendaIncidencia(countValues(getFilteredData(),colTipoInc));
+}
+
+function renderChart(chartVar, canvasId, dataObj, type, title, tableDivId){
+  const sortedEntries = Object.entries(dataObj).sort((a,b)=>b[1]-a[1]);
+  const labels = sortedEntries.map(e=>e[0]);
+  const data = sortedEntries.map(e=>e[1]);
+  const colors = generateColors(labels.length);
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  if(chartVar) chartVar.destroy();
+  const newChart = new Chart(ctx,{
+    type:type,
+    data:{ labels, datasets:[{ label:title, data, backgroundColor:colors.bgColors, borderColor:colors.borderColors, borderWidth:2 }] },
+    options:{ responsive:true, plugins:{ legend:{display:type==='pie'}, title:{display:true,text:title} }, scales:{ x:{ticks:{color:'#000', font:{size:14}}}, y:{beginAtZero:true, ticks:{color:'#000', font:{size:14}, precision:0}} } }
+  });
+  if(tableDivId){
+    const div = document.getElementById(tableDivId);
+    let html = '<table><thead><tr><th>Dato</th><th>Total</th></tr></thead><tbody>';
+    labels.forEach((lbl,i)=> html += `<tr><td>${lbl}</td><td>${data[i]}</td></tr>`);
+    html += '</tbody></table>';
+    div.innerHTML = html;
+  }
+  return newChart;
+}
+
+function generateColors(n){
+  const pastelColors = [
+    {bg:'rgba(174,198,207,0.4)', border:'rgba(174,198,207,1)'},
+    {bg:'rgba(255,179,186,0.4)', border:'rgba(255,179,186,1)'},
+    {bg:'rgba(255,223,186,0.4)', border:'rgba(255,223,186,1)'},
+    {bg:'rgba(255,255,186,0.4)', border:'rgba(255,255,186,1)'},
+    {bg:'rgba(186,255,201,0.4)', border:'rgba(186,255,201,1)'},
+    {bg:'rgba(201,186,255,0.4)', border:'rgba(201,186,255,1)'},
+    {bg:'rgba(255,186,255,0.4)', border:'rgba(255,186,255,1)'},
+    {bg:'rgba(186,255,255,0.4)', border:'rgba(186,255,255,1)'},
+    {bg:'rgba(255,210,210,0.4)', border:'rgba(255,210,210,1)'},
+    {bg:'rgba(210,255,210,0.4)', border:'rgba(210,255,210,1)'}
+  ];
+  const bgColors=[], borderColors=[];
+  for(let i=0;i<n;i++){ bgColors.push(pastelColors[i%pastelColors.length].bg); borderColors.push(pastelColors[i%pastelColors.length].border); }
+  return {bgColors,borderColors};
+}
+
+function renderLeyendaIncidencia(dataObj){
+  const leyendaMap = {
+    "Contrato erróneo": " Tipo de contrato, fecha inicio y fin, persona sustituida, testigo TP/TT, causa de contratación, prórroga errónea, novación o RDJ errónea, motivo cambio contrato A/M/P.",
+    "Error trazabilidad": " Tipo de contrato cargado incompatible.",
+    "Modificación de horario": " Eliminan horario y cotizan horas distintas en Seg.social.",
+    "Relevista/jubilado": " Modificación de fecha de jubilación, relevista no inscrito en el SEPE, baja de relevista y no se reemplaza.",
+    "Novación 12 a 15 fuera plazo": " Cargan la novación fuera del plazo.",
+    "Error de Grupo profesional o de Cotización": " Falta Motivo.",
+    "Baja errónea": "Falta Motivo.",
+    "Cambio estando de ausencias": "Falta Motivo.",
+    "Error de datos personales": "Falta Motivo.",
+    "NPS erróneo": "Falta Motivo.",
+    "Error de nivel/sueldo": "Falta Motivo.",
+    "Rdj errónea": "Falta Motivo.",
+    "Desenganche fuera de plazo": "Falta Motivo.",
+    "Eliminan baja": "Falta Motivo."
+  };
+  const motivosPresentes = Object.keys(dataObj);
+  let legendHTML = '<strong>Leyenda de Incidencias:</strong><ul>';
+  const colors = generateColors(motivosPresentes.length);
+  motivosPresentes.forEach((motivo,i)=>{
+    const desc = leyendaMap[motivo] || 'sin justificación';
+    legendHTML += `<li><span class="legend-color" style="background:${colors.bgColors[i]}"></span><strong>${motivo}:</strong> ${desc}</li>`;
+  });
+  legendHTML += '</ul>';
+  document.getElementById('legendIncidencia').innerHTML = legendHTML;
+}
+
+// =================== Exportações ===================
+async function exportDashboardPDF(){
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF('l','mm','a4');
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+
+  // Cabeçalho
+  doc.setFontSize(16);
+  doc.text("Análisis Incidencias", 10, 15);
+  const zona = zonaSelect.value==='all'?'Todas':zonaSelect.value;
+  doc.setFontSize(12);
+  doc.text("Zona RRHH: " + zona, 10, 25);
+
+  // Gráficos lado a lado
+  const charts = ['chartGerente','chartIncidencia'];
+  const chartWidth = (pageWidth/2)-15;
+  const chartHeight = 80;
+  charts.forEach((id,i)=>{
+    const canvas = document.getElementById(id);
+    const imgData = canvas.toDataURL('image/png');
+    const x = i===0?10:(pageWidth/2 +5);
+    doc.addImage(imgData,'PNG',x,30,chartWidth,chartHeight);
+  });
+
+  let yTable = 30+chartHeight+10;
+
+  // Tabela Gerente
+  const tableGerenteDiv = document.getElementById('tableGerente');
+  const canvasGerente = await html2canvas(tableGerenteDiv,{scale:2,backgroundColor:'#ffffff'});
+  const imgGerente = canvasGerente.toDataURL('image/png');
+  doc.addImage(imgGerente,'PNG',10,yTable,pageWidth/2-15,(canvasGerente.height* (pageWidth/2-15))/canvasGerente.width);
+
+  // Tabela Incidencia
+  const tableIncDiv = document.getElementById('tableIncidencia');
+  const canvasInc = await html2canvas(tableIncDiv,{scale:2,backgroundColor:'#ffffff'});
+  const imgInc = canvasInc.toDataURL('image/png');
+  doc.addImage(imgInc,'PNG',pageWidth/2 +5,yTable,pageWidth/2-15,(canvasInc.height* (pageWidth/2-15))/canvasInc.width);
+
+  yTable += Math.max((canvasGerente.height* (pageWidth/2-15))/canvasGerente.width,(canvasInc.height* (pageWidth/2-15))/canvasInc.width)+10;
+
+  // Leyenda
+  const legendDiv = document.getElementById('legendIncidencia');
+  const canvasLegend = await html2canvas(legendDiv,{scale:2,backgroundColor:'#ffffff'});
+  const imgLegend = canvasLegend.toDataURL('image/png');
+  doc.addImage(imgLegend,'PNG',10,yTable,pageWidth-20,(canvasLegend.height*(pageWidth-20))/canvasLegend.width);
+
+  // Footer
+  doc.setFontSize(10);
+  doc.text("Área Contratación y Movimientos SH © 2025", pageWidth/2, pageHeight-10,{align:'center'});
+  doc.save('Analisis_Incidencias.pdf');
+}
+
+function exportFilteredCSV(){ if(!sheetJson) return; const data = getFilteredData(); const ws = XLSX.utils.json_to_sheet(data); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Datos'); XLSX.writeFile(wb,'Analisis_Incidencias.csv'); }
+function exportFilteredXLSX(){ if(!sheetJson) return; const data = getFilteredData(); const ws = XLSX.utils.json_to_sheet(data); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Datos'); XLSX.writeFile(wb,'Analisis_Incidencias.xlsx'); }
+
+async function exportTablePNG(id){
+  const div = document.getElementById(id);
+  loadingDiv.style.display='block';
+  const canvas = await html2canvas(div,{scale:2,backgroundColor:'#ffffff'});
+  const link = document.createElement('a');
+  link.href = canvas.toDataURL('image/png'); link.download=id+'.png'; link.click();
+  loadingDiv.style.display='none';
+}
+
+function exportChartPNG(id){
+  const canvas = document.getElementById(id);
+  const link = document.createElement('a');
+  link.href = canvas.toDataURL('image/png'); link.download=id+'.png'; link.click();
+}
+</script>
+</body>
+</html>
