@@ -27,7 +27,7 @@ th { background:#eee; }
 .exportChartBtn, .exportTableBtn { margin: 5px 0 10px 0; padding: 5px 10px; font-size: 14px; cursor: pointer; border-radius: 5px; border: 1px solid #888; background-color: #f0f0f0; }
 .exportChartBtn:hover, .exportTableBtn:hover { background-color: #e0e0e0; }
 
-/* Layout responsivo: 2 colunas em telas grandes, 1 coluna em mobile */
+/* Layout responsivo */
 .charts { display: flex; flex-wrap: wrap; gap:20px; }
 .chart-box { flex: 1 1 45%; }
 @media(max-width:900px){ .chart-box { flex:1 1 100%; } }
@@ -44,9 +44,12 @@ footer { position: fixed; bottom: 0; left: 0; width: 100%; background: #888; col
   <div id="dropArea">Arrastra y suelta el archivo aquí o haz clic para seleccionar</div>
   <input type="file" id="excelFile" accept=".xlsx,.xls,.csv" style="display:none;">
   
-  <div id="zonaContainer" style="margin-top:15px; display:none;">
+  <div id="filtrosContainer" style="margin-top:15px; display:none;">
     <label>Filtrar por ZONA RRHH:</label>
     <select id="zonaSelect"><option value="all">Todas</option></select>
+
+    <label style="margin-left:20px;">Filtrar por MES:</label>
+    <select id="mesSelect"><option value="all">Todos</option></select>
   </div>
 
   <div style="margin-top:15px;">
@@ -98,11 +101,12 @@ footer { position: fixed; bottom: 0; left: 0; width: 100%; background: #888; col
 <script>
 let workbook, sheetJson;
 let chartGerente, chartIncidencia;
-let colGerente, colTipoInc, colZona;
+let colGerente, colTipoInc, colZona, colMes;
 
 const excelFile = document.getElementById('excelFile');
 const dropArea = document.getElementById('dropArea');
 const zonaSelect = document.getElementById('zonaSelect');
+const mesSelect = document.getElementById('mesSelect');
 const tipoGerente = document.getElementById('tipoGerente');
 const tipoIncidencia = document.getElementById('tipoIncidencia');
 const loadingDiv = document.getElementById('loading');
@@ -121,6 +125,7 @@ dropArea.addEventListener('drop', e => {
 });
 excelFile.addEventListener('change', handleFile);
 zonaSelect.addEventListener('change', updateDashboard);
+mesSelect.addEventListener('change', updateDashboard);
 tipoGerente.addEventListener('change', updateDashboard);
 tipoIncidencia.addEventListener('change', updateDashboard);
 exportPDFBtn.addEventListener('click', exportDashboardPDF);
@@ -142,7 +147,7 @@ function handleFile(e){
     const sheet = workbook.Sheets[firstSheet];
     sheetJson = XLSX.utils.sheet_to_json(sheet, {defval:''});
     detectColumns();
-    populateZona(true);
+    populateFiltros(true);
     updateDashboard();
     loadingDiv.style.display='none';
   };
@@ -155,19 +160,32 @@ function detectColumns(){
   colGerente = headers.find(h=>h.includes('GERENTE')) || headers[0];
   colTipoInc = headers.find(h=>h.includes('INCIDENCIA')) || headers[0];
   colZona = headers.find(h=>h.includes('ZONA')) || headers[0];
+  colMes = headers.find(h=>h.includes('MES')) || null;
 }
 
-function populateZona(selectZona1=false){
+function populateFiltros(selectZona1=false){
   const zonas = Array.from(new Set(sheetJson.map(r=>r[colZona]||'No Definida'))).sort();
   zonaSelect.innerHTML = '<option value="all">Todas</option>';
   zonas.forEach(z=>{ const opt = document.createElement('option'); opt.value = z; opt.textContent = z; zonaSelect.appendChild(opt); });
   if(selectZona1 && zonas.includes('ZONA 1')) zonaSelect.value = 'ZONA 1';
-  document.getElementById('zonaContainer').style.display='block';
+
+  mesSelect.innerHTML = '<option value="all">Todos</option>';
+  if(colMes){
+    const meses = Array.from(new Set(sheetJson.map(r=>r[colMes]||'No Definido'))).sort();
+    meses.forEach(m=>{ const opt = document.createElement('option'); opt.value = m; opt.textContent = m; mesSelect.appendChild(opt); });
+  }
+
+  document.getElementById('filtrosContainer').style.display='block';
 }
 
 function getFilteredData(){ 
   const zona = zonaSelect.value; 
-  return zona==='all' ? sheetJson : sheetJson.filter(r=>r[colZona]===zona); 
+  const mes = mesSelect.value;
+  return sheetJson.filter(r=>{
+    const matchZona = zona==='all' || r[colZona]===zona;
+    const matchMes = !colMes || mes==='all' || r[colMes]===mes;
+    return matchZona && matchMes;
+  }); 
 }
 
 function countValues(data, col){
@@ -178,9 +196,10 @@ function countValues(data, col){
 
 function updateDashboard(){
   if(!sheetJson) return;
-  chartGerente = renderChart(chartGerente,'chartGerente',countValues(getFilteredData(),colGerente),tipoGerente.value,'Gerentes','tableGerente');
-  chartIncidencia = renderChart(chartIncidencia,'chartIncidencia',countValues(getFilteredData(),colTipoInc),tipoIncidencia.value,'Tipo Incidencia','tableIncidencia');
-  renderLeyendaIncidencia(countValues(getFilteredData(),colTipoInc));
+  const dataFiltered = getFilteredData();
+  chartGerente = renderChart(chartGerente,'chartGerente',countValues(dataFiltered,colGerente),tipoGerente.value,'Gerentes','tableGerente');
+  chartIncidencia = renderChart(chartIncidencia,'chartIncidencia',countValues(dataFiltered,colTipoInc),tipoIncidencia.value,'Tipo Incidencia','tableIncidencia');
+  renderLeyendaIncidencia(countValues(dataFiltered,colTipoInc));
 }
 
 function renderChart(chartVar, canvasId, dataObj, type, title, tableDivId){
@@ -212,11 +231,7 @@ function generateColors(n){
     {bg:'rgba(255,223,186,0.4)', border:'rgba(255,223,186,1)'},
     {bg:'rgba(255,255,186,0.4)', border:'rgba(255,255,186,1)'},
     {bg:'rgba(186,255,201,0.4)', border:'rgba(186,255,201,1)'},
-    {bg:'rgba(201,186,255,0.4)', border:'rgba(201,186,255,1)'},
-    {bg:'rgba(255,186,255,0.4)', border:'rgba(255,186,255,1)'},
-    {bg:'rgba(186,255,255,0.4)', border:'rgba(186,255,255,1)'},
-    {bg:'rgba(255,210,210,0.4)', border:'rgba(255,210,210,1)'},
-    {bg:'rgba(210,255,210,0.4)', border:'rgba(210,255,210,1)'}
+    {bg:'rgba(201,186,255,0.4)', border:'rgba(201,186,255,1)'}
   ];
   const bgColors=[], borderColors=[];
   for(let i=0;i<n;i++){ bgColors.push(pastelColors[i%pastelColors.length].bg); borderColors.push(pastelColors[i%pastelColors.length].border); }
@@ -225,20 +240,10 @@ function generateColors(n){
 
 function renderLeyendaIncidencia(dataObj){
   const leyendaMap = {
-    "Contrato erróneo": " Tipo de contrato, fecha inicio y fin, persona sustituida, testigo TP/TT, causa de contratación, prórroga errónea, novación o RDJ errónea, motivo cambio contrato A/M/P.",
+    "Contrato erróneo": " Tipo de contrato, fecha inicio y fin, persona sustituida, testigo TP/TT...",
     "Error trazabilidad": " Tipo de contrato cargado incompatible.",
     "Modificación de horario": " Eliminan horario y cotizan horas distintas en Seg.social.",
-    "Relevista/jubilado": " Modificación de fecha de jubilación, relevista no inscrito en el SEPE, baja de relevista y no se reemplaza.",
-    "Novación 12 a 15 fuera plazo": " Cargan la novación fuera del plazo.",
-    "Error de Grupo profesional o de Cotización": " Falta Motivo.",
-    "Baja errónea": "Falta Motivo.",
-    "Cambio estando de ausencias": "Falta Motivo.",
-    "Error de datos personales": "Falta Motivo.",
-    "NPS erróneo": "Falta Motivo.",
-    "Error de nivel/sueldo": "Falta Motivo.",
-    "Rdj errónea": "Falta Motivo.",
-    "Desenganche fuera de plazo": "Falta Motivo.",
-    "Eliminan baja": "Falta Motivo."
+    "Relevista/jubilado": " Modificación de fecha de jubilación...",
   };
   const motivosPresentes = Object.keys(dataObj);
   let legendHTML = '<strong>Leyenda de Incidencias:</strong><ul>';
@@ -257,50 +262,20 @@ async function exportDashboardPDF(){
   const doc = new jsPDF('l','mm','a4');
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
-
-  // Cabeçalho
   doc.setFontSize(16);
   doc.text("Análisis Incidencias", 10, 15);
   const zona = zonaSelect.value==='all'?'Todas':zonaSelect.value;
+  const mes = mesSelect.value==='all'?'Todos':mesSelect.value;
   doc.setFontSize(12);
-  doc.text("Zona RRHH: " + zona, 10, 25);
-
-  // Gráficos lado a lado
-  const charts = ['chartGerente','chartIncidencia'];
-  const chartWidth = (pageWidth/2)-15;
-  const chartHeight = 80;
-  charts.forEach((id,i)=>{
-    const canvas = document.getElementById(id);
-    const imgData = canvas.toDataURL('image/png');
-    const x = i===0?10:(pageWidth/2 +5);
-    doc.addImage(imgData,'PNG',x,30,chartWidth,chartHeight);
-  });
-
-  let yTable = 30+chartHeight+10;
-
-  // Tabela Gerente
-  const tableGerenteDiv = document.getElementById('tableGerente');
-  const canvasGerente = await html2canvas(tableGerenteDiv,{scale:2,backgroundColor:'#ffffff'});
-  const imgGerente = canvasGerente.toDataURL('image/png');
-  doc.addImage(imgGerente,'PNG',10,yTable,pageWidth/2-15,(canvasGerente.height* (pageWidth/2-15))/canvasGerente.width);
-
-  // Tabela Incidencia
-  const tableIncDiv = document.getElementById('tableIncidencia');
-  const canvasInc = await html2canvas(tableIncDiv,{scale:2,backgroundColor:'#ffffff'});
-  const imgInc = canvasInc.toDataURL('image/png');
-  doc.addImage(imgInc,'PNG',pageWidth/2 +5,yTable,pageWidth/2-15,(canvasInc.height* (pageWidth/2-15))/canvasInc.width);
-
-  yTable += Math.max((canvasGerente.height* (pageWidth/2-15))/canvasGerente.width,(canvasInc.height* (pageWidth/2-15))/canvasInc.width)+10;
-
-  // Leyenda
-  const legendDiv = document.getElementById('legendIncidencia');
-  const canvasLegend = await html2canvas(legendDiv,{scale:2,backgroundColor:'#ffffff'});
-  const imgLegend = canvasLegend.toDataURL('image/png');
-  doc.addImage(imgLegend,'PNG',10,yTable,pageWidth-20,(canvasLegend.height*(pageWidth-20))/canvasLegend.width);
-
-  // Footer
+  doc.text("Zona RRHH: " + zona + " | Mes: " + mes, 10, 25);
+  const charts = document.querySelector('.charts');
+  const canvas = await html2canvas(charts, { scale:2 });
+  const imgData = canvas.toDataURL('image/png');
+  const imgWidth = pageWidth - 20;
+  const imgHeight = canvas.height * imgWidth / canvas.width;
+  doc.addImage(imgData, 'PNG', 10, 30, imgWidth, imgHeight);
   doc.setFontSize(10);
-  doc.text("Área Contratación y Movimientos SH © 2025", pageWidth/2, pageHeight-10,{align:'center'});
+  doc.text("Área Contratación y Movimientos SH © 2025", pageWidth/2, pageHeight-10, {align:'center'});
   doc.save('Analisis_Incidencias.pdf');
 }
 
